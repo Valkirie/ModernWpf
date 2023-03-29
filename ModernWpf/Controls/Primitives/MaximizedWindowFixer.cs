@@ -1,17 +1,12 @@
-﻿using Standard;
-using System;
-using System.ComponentModel;
-using System.Diagnostics.CodeAnalysis;
+﻿using System;
 using System.Runtime.InteropServices;
-using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
-using Windows.Win32;
-using Windows.Win32.Foundation;
-using Windows.Win32.Graphics.Gdi;
-using Windows.Win32.UI.WindowsAndMessaging;
+using MS.Win32;
+using Standard;
+using NativeMethods = Standard.NativeMethods;
 
 namespace ModernWpf.Controls.Primitives
 {
@@ -149,18 +144,18 @@ namespace ModernWpf.Controls.Primitives
         private IntPtr WindowFilterMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             IntPtr retInt = IntPtr.Zero;
-            uint message = (uint)msg;
-            
+            WindowMessage message = (WindowMessage)msg;
+
             switch (message)
             {
-                case PInvoke.WM_SETTINGCHANGE:
+                case WindowMessage.WM_SETTINGCHANGE:
                     InvalidateMaximizedWindowBorder();
                     UpdateWindowPadding();
                     break;
-                case PInvoke.WM_WINDOWPOSCHANGING:
+                case WindowMessage.WM_WINDOWPOSCHANGING:
                     OnWindowPosChanging(lParam);
                     break;
-                case PInvoke.WM_WINDOWPOSCHANGED:
+                case WindowMessage.WM_WINDOWPOSCHANGED:
                     if (!_maximizedWindowBorder.HasValue)
                     {
                         UpdateWindowPadding();
@@ -171,23 +166,24 @@ namespace ModernWpf.Controls.Primitives
             return retInt;
         }
 
-        private unsafe void OnWindowPosChanging(IntPtr lParam)
+        private void OnWindowPosChanging(IntPtr lParam)
         {
             var pos = (WINDOWPOS)Marshal.PtrToStructure(lParam, typeof(WINDOWPOS));
-            if ((pos.flags & SET_WINDOW_POS_FLAGS.SWP_NOSIZE) == 0)
+            if ((pos.flags & SWP.NOSIZE) == 0)
             {
                 bool windowPosAdjusted = false;
-                WINDOWPLACEMENT placement = GetWindowPlacement(pos.hwnd);
-                if (placement.showCmd == SHOW_WINDOW_CMD.SW_MAXIMIZE)
+
+                WINDOWPLACEMENT placement = NativeMethods.GetWindowPlacement(pos.hwnd);
+                if (placement.showCmd == SW.MAXIMIZE)
                 {
                     if (GetTaskbarAutoHide(out ABEdge edge))
                     {
-                        RECT rect = new RECT(pos.x, pos.y, pos.x + pos.cx, pos.y + pos.cy);
-                        IntPtr monitor = MonitorFromRect(ref rect, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
+                        var rect = new MS.Win32.NativeMethods.RECT(pos.x, pos.y, pos.x + pos.cx, pos.y + pos.cy);
+                        IntPtr monitor = SafeNativeMethods.MonitorFromRect(ref rect, MONITOR_DEFAULTTONEAREST);
                         if (monitor != IntPtr.Zero)
                         {
-                            MONITORINFO info = GetMonitorInfo(monitor);
-                            bool primary = (info.dwFlags & PInvoke.MONITORINFOF_PRIMARY) != 0;
+                            MONITORINFO info = NativeMethods.GetMonitorInfo(monitor);
+                            bool primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
                             if (primary)
                             {
                                 if (pos.x < 0 &&
@@ -230,9 +226,9 @@ namespace ModernWpf.Controls.Primitives
             dpiScaleY = transformToDevice.M22;
 #endif
 
-            int frameWidth = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSIZEFRAME);
-            int frameHeight = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYSIZEFRAME);
-            int borderPadding = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXPADDEDBORDER);
+            int frameWidth = NativeMethods.GetSystemMetrics(SM.CXSIZEFRAME);
+            int frameHeight = NativeMethods.GetSystemMetrics(SM.CYSIZEFRAME);
+            int borderPadding = NativeMethods.GetSystemMetrics(SM.CXPADDEDBORDER);
             Size borderSize = new Size(frameWidth + borderPadding, frameHeight + borderPadding);
             Size borderSizeInDips = DpiHelper.DeviceSizeToLogical(borderSize, dpiScaleX, dpiScaleY);
 
@@ -263,7 +259,7 @@ namespace ModernWpf.Controls.Primitives
 
         private static bool GetTaskbarAutoHide(out ABEdge edge)
         {
-            IntPtr trayWnd = PInvoke.FindWindow("Shell_TrayWnd", null);
+            IntPtr trayWnd = FindWindow("Shell_TrayWnd", null);
             if (trayWnd != IntPtr.Zero)
             {
                 APPBARDATA abd = new APPBARDATA();
@@ -280,15 +276,15 @@ namespace ModernWpf.Controls.Primitives
 
             static ABEdge GetEdge(RECT rc)
             {
-                if (rc.top == rc.left && rc.bottom > rc.right)
+                if (rc.Top == rc.Left && rc.Bottom > rc.Right)
                 {
                     return ABEdge.ABE_LEFT;
                 }
-                else if (rc.top == rc.left && rc.bottom < rc.right)
+                else if (rc.Top == rc.Left && rc.Bottom < rc.Right)
                 {
                     return ABEdge.ABE_TOP;
                 }
-                else if (rc.top > rc.left)
+                else if (rc.Top > rc.Left)
                 {
                     return ABEdge.ABE_BOTTOM;
                 }
@@ -327,6 +323,16 @@ namespace ModernWpf.Controls.Primitives
 
         #region Win32 Interop
 
+        private const int MONITOR_DEFAULTTONEAREST = 0x00000002;
+        private const int MONITORINFOF_PRIMARY = 0x00000001;
+
+        private enum WindowMessage
+        {
+            WM_SETTINGCHANGE = 0x001A,
+            WM_WINDOWPOSCHANGING = 0x0046,
+            WM_WINDOWPOSCHANGED = 0x0047,
+        }
+
         private enum ABEdge
         {
             ABE_LEFT = 0,
@@ -355,36 +361,8 @@ namespace ModernWpf.Controls.Primitives
         [DllImport("shell32", CallingConvention = CallingConvention.StdCall)]
         private static extern uint SHAppBarMessage(ABMsg dwMessage, ref APPBARDATA pData);
 
-        [DllImport("user32.dll", EntryPoint = "GetMonitorInfo", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool _GetMonitorInfo(IntPtr hMonitor, [In, Out] MONITORINFO lpmi);
-
-        private static MONITORINFO GetMonitorInfo(IntPtr hMonitor)
-        {
-            var mi = new MONITORINFO();
-            if (!_GetMonitorInfo(hMonitor, mi))
-            {
-                throw new Win32Exception();
-            }
-            return mi;
-        }
-
-        [DllImport("user32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool GetWindowPlacement(IntPtr hwnd, WINDOWPLACEMENT lpwndpl);
-
-        private static WINDOWPLACEMENT GetWindowPlacement(IntPtr hwnd)
-        {
-            WINDOWPLACEMENT wndpl = new WINDOWPLACEMENT();
-            if (GetWindowPlacement(hwnd, wndpl))
-            {
-                return wndpl;
-            }
-            throw new Win32Exception();
-        }
-
-        [DllImport("user32.dll", ExactSpelling = true)]
-        private static extern IntPtr MonitorFromRect(ref RECT rect, MONITOR_FROM_FLAGS flags);
+        [DllImport("user32", CharSet = CharSet.Auto)]
+        private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
         #endregion
 
